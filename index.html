@@ -1101,6 +1101,12 @@ select.inp{cursor:pointer;}
 .yape-row{border-left:3px solid var(--yape)}
 .yape-amt{font-family:var(--mono);font-size:13px;color:#c084fc;font-variant-numeric:tabular-nums}
 
+.prod-toggle{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:99px;border:1px solid var(--border2);background:var(--s2);color:var(--text2);font-family:var(--sans);font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.prod-toggle .pt-dot{width:26px;height:14px;border-radius:99px;background:var(--s3);border:1px solid var(--border2);position:relative;transition:all .15s}
+.prod-toggle .pt-dot::after{content:'';position:absolute;top:1px;left:1px;width:10px;height:10px;border-radius:50%;background:var(--text3);transition:all .15s}
+.prod-toggle.on{background:var(--accent-bg);border-color:var(--accent-border);color:var(--accent)}
+.prod-toggle.on .pt-dot{background:var(--accent-bg);border-color:var(--accent-border)}
+.prod-toggle.on .pt-dot::after{left:13px;background:var(--accent)}
 /* PEDIDO BUILDER */
 .pedido-line{
   display:flex;align-items:center;gap:8px;
@@ -1539,6 +1545,7 @@ html,body{background:radial-gradient(900px 500px at 85% -10%,rgba(94,234,212,.07
           <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-bottom:10px;">Si lo dejas vacío, se usa la hora actual. La hora real en que lo haces siempre se guarda aparte.</div>
           <div class="inp-row" style="flex-wrap:wrap;gap:8px;">
             <select class="inp" id="pedido-socio" style="flex:1;min-width:150px;" onchange="renderPedidoBuilder()"><option value="">¿Quién lo hizo? (opcional)</option></select>
+            <button type="button" class="prod-toggle" id="pedido-producto" onclick="togglePedProducto()" title="Activado: el socio gana S/ 3 por producto vendido (sin porcentaje)"><span class="pt-dot"></span>Producto</button>
             <select class="inp" id="pedido-estado" style="flex:1;min-width:110px;">
               <option value="completado" selected>Completado</option>
               <option value="pendiente">Pendiente</option>
@@ -3740,8 +3747,8 @@ function renderPedidoBuilder(){
   if(!pedidoLines.length){el.innerHTML='<div class="empty" style="padding:16px;border:1px dashed var(--border);border-radius:8px;margin-bottom:12px;">Agrega ítems arriba</div>';pagoSync();return;}
   const total=pedidoLines.reduce((s,l)=>s+l.precio*l.qty,0);
   const conSocio=!!pedidoSocioData().socioId;
-  const costo=conSocio?total*SOCIO_PCT/100:pedidoLines.reduce((s,l)=>s+l.costo*l.qty,0);
   const nItems=pedidoLines.length,nUnid=pedidoLines.reduce((s,l)=>s+l.qty,0);
+  const costo=conSocio?(pedidoEsProducto?SOCIO_PROD_FEE*nUnid:total*SOCIO_PCT/100):pedidoLines.reduce((s,l)=>s+l.costo*l.qty,0);
   el.innerHTML=`
     <div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:4px;">
       <div class="pl-head">
@@ -3767,7 +3774,7 @@ function renderPedidoBuilder(){
     <div class="pedido-total">
       <div>
         <div class="pt-label">Total</div>
-        <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">${conSocio?'socio '+SOCIO_PCT+'%':'costo'} S/ ${costo.toFixed(2)} · gan. S/ ${(total-costo).toFixed(2)}</div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">${conSocio?(pedidoEsProducto?'socio S/ '+SOCIO_PROD_FEE+' × '+nUnid:'socio '+SOCIO_PCT+'%'):'costo'} S/ ${costo.toFixed(2)} · gan. S/ ${(total-costo).toFixed(2)}</div>
       </div>
       <div class="pt-val">S/ ${total.toFixed(2)}</div>
     </div>
@@ -3782,7 +3789,7 @@ function nextPedidoNumero(){
 }
 // Si el pedido lo hizo un socio, el "costo" es el 50% que le corresponde a él.
 function normalizePedidos(v){
-  Object.values(v||{}).forEach(p=>{if(p&&p.socioId){p.costo=(p.total||0)*SOCIO_PCT/100;p.ganancia=(p.total||0)-p.costo;}});
+  Object.values(v||{}).forEach(p=>{if(p&&p.socioId){p.costo=socioPago(p);p.ganancia=(p.total||0)-p.costo;}});
   return v;
 }
 function pedidoSocioData(){
@@ -3794,7 +3801,9 @@ function crearPedido(){
   if(!pedidoLines.length){showToast('Agrega al menos un producto');return;}
   const total=pedidoLines.reduce((s,l)=>s+l.precio*l.qty,0);
   let costo=pedidoLines.reduce((s,l)=>s+l.costo*l.qty,0);
-  if(pedidoSocioData().socioId)costo=total*SOCIO_PCT/100;
+  const conSocioC=!!pedidoSocioData().socioId;
+  const esProd=conSocioC&&pedidoEsProducto;
+  if(conSocioC)costo=esProd?SOCIO_PROD_FEE*pedidoLines.reduce((s,l)=>s+l.qty,0):total*SOCIO_PCT/100;
   const efIn=document.getElementById('pedido-efectivo').value,yaIn=document.getElementById('pedido-yape').value;
   let pagoEfectivo,pagoYape;
   if(efIn===''&&yaIn===''){pagoEfectivo=total;pagoYape=0;}
@@ -3822,6 +3831,7 @@ function crearPedido(){
     pagoEfectivo,pagoYape,
     estado:document.getElementById('pedido-estado').value,
     ...pedidoSocioData(),
+    esProducto:esProd,
     fecha:new Date().toISOString(),          // hora real en que se hizo
     horaRegistro:fechaPed.toISOString(),     // hora de registro (manual o la misma)
     usuario:cCode,
@@ -3836,6 +3846,7 @@ function crearPedido(){
 // deja el formulario de pedido totalmente vacío (cliente, producto, cantidad, socio, estado e ítems)
 function resetPedidoForm(){
   pedidoLines=[];
+  pedidoEsProducto=false;{const b=document.getElementById('pedido-producto');if(b)b.classList.remove('on');}
   const v=(id,val)=>{const e=document.getElementById(id);if(e)e.value=val;};
   v('pedido-estado','completado');
   v('pedido-prod-input','');v('pedido-prod-sel','');v('pedido-qty','1');v('pedido-socio','');
@@ -3942,12 +3953,12 @@ function renderCostoResumen(){
   const rows=Object.entries(sc(allSocios)).map(([id,so])=>{
     const mine=comp.filter(p=>p.socioId===id);
     const v=mine.reduce((s,p)=>s+(p.total||0),0);
-    return {id,so,n:mine.length,v,c:v*SOCIO_PCT/100};
+    return {id,so,n:mine.length,v,c:mine.reduce((s,p)=>s+socioPago(p),0),np:mine.filter(p=>p.esProducto).length};
   }).sort((a,b)=>b.v-a.v||a.so.nombre.localeCompare(b.so.nombre));
   const libres=comp.filter(p=>!p.socioId);
   const lv=libres.reduce((s,p)=>s+(p.total||0),0),lc=libres.reduce((s,p)=>s+(p.costo||0),0);
   const totV=rows.reduce((s,r)=>s+r.v,0)+lv,totC=rows.reduce((s,r)=>s+r.c,0)+lc;
-  el.innerHTML=`<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-bottom:10px;">${finLabel()} · el costo es el ${SOCIO_PCT}% de lo que hizo cada socio</div>
+  el.innerHTML=`<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-bottom:10px;">${finLabel()} · el costo es el ${SOCIO_PCT}% de lo que hizo cada socio (o S/ ${SOCIO_PROD_FEE} por producto si es pedido «Producto»)</div>
     <div class="kpi-strip" style="margin-bottom:12px;">
       <div class="kpi-box"><div class="kpi-label">Vendido</div><div class="kpi-val g">${money(totV)}</div></div>
       <div class="kpi-box"><div class="kpi-label">Costo total</div><div class="kpi-val">${money(totC)}</div></div>
@@ -3956,7 +3967,7 @@ function renderCostoResumen(){
       <div class="axc-top">
         <div class="cli-av" style="width:32px;height:32px;font-size:12px;background:${strColor(r.so.nombre)}22;color:${strColor(r.so.nombre)};border-color:${strColor(r.so.nombre)}44;">${esc(r.so.nombre[0].toUpperCase())}</div>
         <div class="axc-name">${esc(r.so.nombre)}${r.so.rol?` <span class="tag tag-green">${esc(r.so.rol)}</span>`:''}</div>
-        <div><div class="axc-spent">${money(r.c)}</div><div class="axc-sub">su ${SOCIO_PCT}% · hizo ${money(r.v)} · ${r.n} pedido${r.n!==1?'s':''}</div></div>
+        <div><div class="axc-spent">${money(r.c)}</div><div class="axc-sub">${r.np?'su pago':'su '+SOCIO_PCT+'%'}${r.np?` (${r.np} Producto)`:''} · hizo ${money(r.v)} · ${r.n} pedido${r.n!==1?'s':''}</div></div>
       </div></div>`).join('')+
     (libres.length?`<div class="axc-card"><div class="axc-top"><div class="axc-name" style="color:var(--text2);">Sin socio asignado</div><div><div class="axc-spent" style="color:var(--text);">${money(lc)}</div><div class="axc-sub">costo de productos · ${money(lv)} · ${libres.length} pedido${libres.length!==1?'s':''}</div></div></div></div>`:'')+
     (!rows.length&&!libres.length?'<div class="empty"><div class="empty-icon">🤝</div>Aún no hay ventas completadas en este periodo</div>':'');
@@ -3964,6 +3975,19 @@ function renderCostoResumen(){
 
 // ── Detalle de un socio: todo lo que hizo, por día / mes / todo ──
 const SOCIO_PCT=50;   // a cada socio le corresponde el 50% de lo vendido en los pedidos que hizo él
+const SOCIO_PROD_FEE=3; // con "Producto" activado: sin porcentaje, S/ 3 por cada producto vendido
+let pedidoEsProducto=false;
+function togglePedProducto(){
+  pedidoEsProducto=!pedidoEsProducto;
+  const b=document.getElementById('pedido-producto');if(b)b.classList.toggle('on',pedidoEsProducto);
+  renderPedidoBuilder();
+}
+// lo que le toca al socio en un pedido (modo Producto: S/ 3 por unidad; normal: 50% del total)
+function socioPago(p){
+  if(!p)return 0;
+  if(p.esProducto)return SOCIO_PROD_FEE*pedUnits(p);
+  return (p.total||0)*SOCIO_PCT/100;
+}
 let socSel=null;
 function openSocio(id){socSel={id,mode:'dia',day:localDay(new Date()),month:curMonthKey()};renderSocios();}
 function closeSocio(){socSel=null;renderSocios();}
@@ -3974,7 +3998,7 @@ function socGoDay(d){if(socSel){socSel.mode='dia';socSel.day=d;renderSocioDetail
 function renderSocioDetail(){
   const el=document.getElementById('soc-detail');if(!el||!socSel)return;
   const so=allSocios[socSel.id];if(!so)return;
-  const {mode,day,month}=socSel,pct=SOCIO_PCT/100;
+  const {mode,day,month}=socSel;
   const hm=f=>{const d=new Date(f);return _p2(d.getHours())+':'+_p2(d.getMinutes());};
   const all=Object.values(sc(allPedidos)).filter(p=>p&&p.fecha&&p.socioId===socSel.id&&p.estado!=='cancelado');
   const rows=all.filter(p=>{const d=localDay(p.fecha);return mode==='todo'||(mode==='dia'?d===day:d&&d.slice(0,7)===month);})
@@ -3983,6 +4007,7 @@ function renderSocioDetail(){
   const vendido=done.reduce((s,p)=>s+(p.total||0),0);
   const gan=done.reduce((s,p)=>s+(p.total||0)-(p.costo||0),0);
   const units=done.reduce((s,p)=>s+pedUnits(p),0);
+  const pagoSocio=done.reduce((s,p)=>s+socioPago(p),0);
   const porCobrar=pend.reduce((s,p)=>s+(p.total||0),0);
   const clientes=new Set(rows.map(p=>normalName(p.cliente)).filter(Boolean)).size;
   const prod={};done.forEach(p=>pedLines(p).forEach(l=>{prod[l.nombre]=(prod[l.nombre]||0)+(+l.qty||0);}));
@@ -3997,9 +4022,9 @@ function renderSocioDetail(){
   let byDay='';
   if(mode!=='dia'){
     const m={};
-    rows.forEach(p=>{const d=localDay(p.fecha);const r=m[d]||(m[d]={n:0,v:0});r.n++;if(p.estado==='completado')r.v+=p.total||0;});
+    rows.forEach(p=>{const d=localDay(p.fecha);const r=m[d]||(m[d]={n:0,v:0});r.n++;if(p.estado==='completado'){r.v+=p.total||0;r.pay=(r.pay||0)+socioPago(p);}});
     const days=Object.keys(m).sort().reverse();
-    byDay=days.length?`<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin:16px 0 8px;">por día · toca uno para verlo</div>`+days.map(d=>`<div class="cli-card" onclick="socGoDay('${d}')"><div style="flex:1;"><div class="cli-name">${infDayLabel(d)}</div><div class="cli-meta"><span style="font-size:10px;color:var(--text3);">${m[d].n} pedido${m[d].n!==1?'s':''} · vendió ${money(m[d].v)}</span></div></div><div class="cli-total" style="font-size:13px;">${money(m[d].v*pct)}</div></div>`).join(''):'';
+    byDay=days.length?`<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin:16px 0 8px;">por día · toca uno para verlo</div>`+days.map(d=>`<div class="cli-card" onclick="socGoDay('${d}')"><div style="flex:1;"><div class="cli-name">${infDayLabel(d)}</div><div class="cli-meta"><span style="font-size:10px;color:var(--text3);">${m[d].n} pedido${m[d].n!==1?'s':''} · vendió ${money(m[d].v)}</span></div></div><div class="cli-total" style="font-size:13px;">${money(m[d].pay||0)}</div></div>`).join(''):'';
   }
   const act=rows.length?rows.map(p=>{
     const d=localDay(p.fecha),ok=p.estado==='completado';
@@ -4010,7 +4035,7 @@ function renderSocioDetail(){
         <div class="cli-name"><span style="font-family:var(--mono);">${esc(p.numero||'')}</span> · ${esc(p.cliente||'Sin nombre')}${ok?'':' <span class="tag" style="color:var(--warn);">pendiente</span>'}</div>
         ${items?`<div style="font-size:11px;color:var(--text2);margin-top:3px;">${items}</div>`:''}
       </div>
-      <div style="text-align:right;flex-shrink:0;"><div class="cli-total" style="font-size:13px;">${money(p.total)}</div>${ok?`<div style="font-size:10px;color:var(--text3);">su ${SOCIO_PCT}%: ${money((p.total||0)*pct)}</div>`:''}</div>
+      <div style="text-align:right;flex-shrink:0;"><div class="cli-total" style="font-size:13px;">${money(p.total)}</div>${ok?`<div style="font-size:10px;color:var(--text3);">${p.esProducto?'📦 Producto · S/ '+SOCIO_PROD_FEE+' × '+pedUnits(p):'su '+SOCIO_PCT+'%'}: ${money(socioPago(p))}</div>`:''}</div>
     </div>`;}).join(''):`<div class="empty"><div class="empty-icon">🗓</div>${esc(so.nombre)} no hizo pedidos en ${mode==='todo'?'el historial':'este '+(mode==='dia'?'día':'mes')}</div>`;
   el.innerHTML=`
     <button class="btn-ghost" onclick="closeSocio()" style="margin-bottom:12px;">← Socios</button>
@@ -4023,7 +4048,7 @@ function renderSocioDetail(){
     ${picker}
     <div class="kpi-strip" style="margin-bottom:10px;">
       <div class="kpi-box"><div class="kpi-label">Vendió</div><div class="kpi-val g">${money(vendido)}</div><div class="kpi-sub">${done.length} pedido${done.length!==1?'s':''} completado${done.length!==1?'s':''}</div></div>
-      <div class="kpi-box"><div class="kpi-label">Le corresponde ${SOCIO_PCT}%</div><div class="kpi-val g">${money(vendido*pct)}</div><div class="kpi-sub">de lo que él hizo</div></div>
+      <div class="kpi-box"><div class="kpi-label">Le corresponde</div><div class="kpi-val g">${money(pagoSocio)}</div><div class="kpi-sub">${SOCIO_PCT}% · o S/ ${SOCIO_PROD_FEE} por producto</div></div>
       <div class="kpi-box"><div class="kpi-label">Productos / servicios</div><div class="kpi-val">${units}</div><div class="kpi-sub">unidades vendidas</div></div>
       <div class="kpi-box"><div class="kpi-label">Ticket promedio</div><div class="kpi-val">${money(done.length?vendido/done.length:0)}</div><div class="kpi-sub">por pedido</div></div>
     </div>
